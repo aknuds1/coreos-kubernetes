@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
-	"net/url"
 
 	"gopkg.in/yaml.v2"
 )
 
 const (
+	DefaultK8sVer              = "v1.1.4"
 	DefaultVPCCIDR             = "10.0.0.0/16"
 	DefaultInstanceCIDR        = "10.0.0.0/24"
 	DefaultControllerIP        = "10.0.0.50"
@@ -30,7 +30,6 @@ type Config struct {
 	KeyName                  string `yaml:"keyName"`
 	Region                   string `yaml:"region"`
 	AvailabilityZone         string `yaml:"availabilityZone"`
-	ArtifactURL              string `yaml:"artifactURL"`
 	ReleaseChannel           string `yaml:"releaseChannel"`
 	ControllerInstanceType   string `yaml:"controllerInstanceType"`
 	ControllerRootVolumeSize int    `yaml:"controllerRootVolumeSize"`
@@ -45,6 +44,14 @@ type Config struct {
 	ServiceCIDR              string `yaml:"serviceCIDR"`
 	KubernetesServiceIP      string `yaml:"kubernetesServiceIP"`
 	DNSServiceIP             string `yaml:"dnsServiceIP"`
+	K8sVer                   string `yaml:"kubernetesVersion"`
+
+	//Calculated fields
+	APIServers       string `yaml:"-"`
+	SecureAPIServers string `yaml:"-"`
+	ETCDEndpoints    string `yaml:"-"`
+
+	TLSConfig *TLSConfig `yaml:"-"`
 }
 
 func (cfg *Config) Valid() error {
@@ -59,9 +66,6 @@ func (cfg *Config) Valid() error {
 	}
 	if cfg.ClusterName == "" {
 		return errors.New("clusterName must be set")
-	}
-	if _, err := url.Parse(cfg.ArtifactURL); err != nil {
-		return fmt.Errorf("invalid artifactURL: %v", err)
 	}
 
 	_, vpcNet, err := net.ParseCIDR(cfg.VPCCIDR)
@@ -147,13 +151,18 @@ func decodeConfigBytes(out *Config, d []byte) error {
 		return fmt.Errorf("config file invalid: %v", err)
 	}
 
+	//Set calculated fields
+
+	//TODO: this will look different once we support multiple controllers
+	out.ETCDEndpoints = fmt.Sprintf("http://%s:2379", out.ControllerIP)
+	out.APIServers = fmt.Sprintf("http://%s:8080", out.ControllerIP)
+	out.SecureAPIServers = fmt.Sprintf("https://%s:443", out.ControllerIP)
 	return nil
 }
 
-func NewDefaultConfig(ver string) *Config {
+func NewDefaultConfig() *Config {
 	return &Config{
 		ClusterName:         "kubernetes",
-		ArtifactURL:         DefaultArtifactURL(ver),
 		VPCCIDR:             DefaultVPCCIDR,
 		InstanceCIDR:        DefaultInstanceCIDR,
 		ControllerIP:        DefaultControllerIP,
@@ -161,9 +170,6 @@ func NewDefaultConfig(ver string) *Config {
 		ServiceCIDR:         DefaultServiceCIDR,
 		KubernetesServiceIP: DefaultKubernetesServiceIP,
 		DNSServiceIP:        DefaultDNSServiceIP,
+		K8sVer:              DefaultK8sVer,
 	}
-}
-
-func DefaultArtifactURL(ver string) string {
-	return fmt.Sprintf("https://coreos-kubernetes.s3.amazonaws.com/%s", ver)
 }

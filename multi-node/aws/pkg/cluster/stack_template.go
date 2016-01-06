@@ -3,7 +3,9 @@ package cluster
 import (
 	"encoding/json"
 
+	"github.com/coreos/coreos-kubernetes/multi-node/aws/pkg/blobutil"
 	"github.com/coreos/coreos-kubernetes/multi-node/aws/pkg/coreosutil"
+	"path/filepath"
 )
 
 const (
@@ -34,12 +36,6 @@ const (
 	parNameControllerRootVolumeSize = "ControllerRootVolumeSize"
 	parNameWorkerInstanceType       = "WorkerInstanceType"
 	parNameKeyName                  = "KeyName"
-	parArtifactURL                  = "ArtifactURL"
-	parCACert                       = "CACert"
-	parAPIServerCert                = "APIServerCert"
-	parAPIServerKey                 = "APIServerKey"
-	parWorkerCert                   = "WorkerCert"
-	parWorkerKey                    = "WorkerKey"
 	parWorkerCount                  = "WorkerCount"
 	parNameWorkerRootVolumeSize     = "WorkerRootVolumeSize"
 	parWorkerSpotPrice              = "WorkerSpotPrice"
@@ -47,10 +43,6 @@ const (
 	parVPCCIDR                      = "VPCCIDR"
 	parInstanceCIDR                 = "InstanceCIDR"
 	parControllerIP                 = "ControllerIP"
-	parServiceCIDR                  = "ServiceCIDR"
-	parPodCIDR                      = "PodCIDR"
-	parKubernetesServiceIP          = "KubernetesServiceIP"
-	parDNSServiceIP                 = "DNSServiceIP"
 )
 
 var (
@@ -119,7 +111,7 @@ func getRegionMap() (map[string]interface{}, error) {
 	return output, nil
 }
 
-func StackTemplateBody(defaultArtifactURL string) (string, error) {
+func StackTemplateBody(cloudConfigDir string) (string, error) {
 	// NOTE: AWS only allows non-alphanumeric keys in the top level key
 	imageID := map[string]interface{}{
 		"Fn::FindInMap": []interface{}{
@@ -415,12 +407,10 @@ func StackTemplateBody(defaultArtifactURL string) (string, error) {
 	res[resNameInstanceController] = map[string]interface{}{
 		"Type": "AWS::EC2::Instance",
 		"Properties": map[string]interface{}{
-			"ImageId":      imageID,
-			"InstanceType": newRef(parNameControllerInstanceType),
-			"KeyName":      newRef(parNameKeyName),
-			"UserData": map[string]interface{}{
-				"Fn::Base64": renderTemplate(baseControllerCloudConfig),
-			},
+			"ImageId":            imageID,
+			"InstanceType":       newRef(parNameControllerInstanceType),
+			"KeyName":            newRef(parNameKeyName),
+			"UserData":           blobutil.MustReadAndCompressFile(filepath.Join(cloudConfigDir, "controller")),
 			"IamInstanceProfile": newRef(resNameIAMInstanceProfileController),
 			"NetworkInterfaces": []map[string]interface{}{
 				map[string]interface{}{
@@ -485,12 +475,10 @@ func StackTemplateBody(defaultArtifactURL string) (string, error) {
 	res[resNameLaunchConfigurationWorker] = map[string]interface{}{
 		"Type": "AWS::AutoScaling::LaunchConfiguration",
 		"Properties": map[string]interface{}{
-			"ImageId":      imageID,
-			"InstanceType": newRef(parNameWorkerInstanceType),
-			"KeyName":      newRef(parNameKeyName),
-			"UserData": map[string]interface{}{
-				"Fn::Base64": renderTemplate(baseWorkerCloudConfig),
-			},
+			"ImageId":            imageID,
+			"InstanceType":       newRef(parNameWorkerInstanceType),
+			"KeyName":            newRef(parNameKeyName),
+			"UserData":           blobutil.MustReadAndCompressFile(filepath.Join(cloudConfigDir, "worker")),
 			"SecurityGroups":     []interface{}{newRef(resNameSecurityGroupWorker)},
 			"IamInstanceProfile": newRef(resNameIAMInstanceProfileWorker),
 			"BlockDeviceMappings": []map[string]interface{}{
@@ -568,37 +556,6 @@ func StackTemplateBody(defaultArtifactURL string) (string, error) {
 		"Description": "Name of SSH keypair to authorize on each instance",
 	}
 
-	par[parArtifactURL] = map[string]interface{}{
-		"Type":        "String",
-		"Default":     defaultArtifactURL,
-		"Description": "Public location of coreos-kubernetes deployment artifacts",
-	}
-
-	par[parCACert] = map[string]interface{}{
-		"Type":        "String",
-		"Description": "PEM-formattd CA certificate, base64-encoded",
-	}
-
-	par[parAPIServerCert] = map[string]interface{}{
-		"Type":        "String",
-		"Description": "PEM-formatted kube-apiserver certificate, base64-encoded",
-	}
-
-	par[parAPIServerKey] = map[string]interface{}{
-		"Type":        "String",
-		"Description": "PEM-formatted kube-apiserver key, base64-encoded",
-	}
-
-	par[parWorkerCert] = map[string]interface{}{
-		"Type":        "String",
-		"Description": "PEM-formatted kubelet (worker) certificate, base64-encoded",
-	}
-
-	par[parWorkerKey] = map[string]interface{}{
-		"Type":        "String",
-		"Description": "PEM-formatted kubelet (worker) key, base64-encoded",
-	}
-
 	par[parWorkerCount] = map[string]interface{}{
 		"Type":        "String",
 		"Default":     "1",
@@ -639,30 +596,6 @@ func StackTemplateBody(defaultArtifactURL string) (string, error) {
 		"Type":        "String",
 		"Default":     DefaultControllerIP,
 		"Description": "IP address for controller in Kubernetes subnet",
-	}
-
-	par[parServiceCIDR] = map[string]interface{}{
-		"Type":        "String",
-		"Default":     DefaultServiceCIDR,
-		"Description": "CIDR for all service IP addresses",
-	}
-
-	par[parPodCIDR] = map[string]interface{}{
-		"Type":        "String",
-		"Default":     DefaultPodCIDR,
-		"Description": "CIDR for all pod IP addresses",
-	}
-
-	par[parKubernetesServiceIP] = map[string]interface{}{
-		"Type":        "String",
-		"Default":     DefaultKubernetesServiceIP,
-		"Description": "IP address for Kubernetes controller service (must be contained by serviceCIDR)",
-	}
-
-	par[parDNSServiceIP] = map[string]interface{}{
-		"Type":        "String",
-		"Default":     DefaultDNSServiceIP,
-		"Description": "IP address of the Kubernetes DNS service (must be contained by serviceCIDR)",
 	}
 
 	regionMap, err := getRegionMap()
